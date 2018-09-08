@@ -5,14 +5,15 @@
 .. moduleauthor:: Tomas Choi <choitomas66@gmail.com>
 """
 
-from custom_exceptions import UserReportableError
 from fbchat import Client
 from fbchat.models import Message
 from fbchat.models import ThreadType
 from fbchat.models import Mention
+from fb_client_exceptions import FBClientError
 from getpass import getpass
 import logging
-import time
+from stoppable_thread import StoppableThread
+from time import sleep
 
 class fb_client(Client):
 
@@ -107,15 +108,15 @@ class fb_client(Client):
             | group_uid: uid of group
 
         Raises:
-            UserReportableError on missing user_uid and group_uid
+            FBClientError on missing user_uid and group_uid
                 or when both are provided
 
         """
 
         if user_uid is None and group_uid is None:
-            raise UserReportableError("Must provide a user_uid or group_uid")
+            raise FBClientError("Must provide a user_uid or group_uid")
         if user_uid is not None and group_uid is not None:
-            raise UserReportableError("Must only provide one of either a " + \
+            raise FBClientError("Must only provide one of either a " + \
                 "user_uid or group_uid")
 
         if user_uid is not None:
@@ -124,4 +125,58 @@ class fb_client(Client):
         elif group_uid is not None:
             self.send(self._construct_message_from_text(message_text), \
                     thread_id=group_uid, thread_type=ThreadType.GROUP)
+
+
+    def _listen_daemon(self):
+        """ listener that runs until the thread it is part
+            of is terminated. Not a true daemon, but purpose
+            is to make the listening process run on a separate
+            thread.
+        """
+
+        self.startListening()
+        self.onListening()
+        while self.thread.is_running() and self.doOneListen():
+            pass
+
+        self.stopListening()
+        self.thread.stopped()
+
+
+    def start_listen(self):
+        """ Creates and starts a listener thread.
+
+            Raises:
+                FBClientError if client is already listening
+        """
+
+        try:
+            self.thread
+            raise FBClientError("Called start_listen when " + \
+                    "client is already listening")
+        except AttributeError:
+            logging.info('Client is listening...')
+            self.thread = StoppableThread(name="listen", target=self._listen_daemon, args=())
+            self.thread.start()
+
+
+    def stop_listen(self):
+        """ "Terminates" the listener thread.
+
+            Raises:
+                FBClientError if client has not been listening
+        """
+
+        try:
+            self.thread
+        except AttributeError:
+            raise FBClientError("Called stop_listen when " + \
+                    "client was not listening")
+
+        if self.thread.is_running():
+            print "Stopping client listen..."
+            self.thread.stop()
+            self.thread.join()
+            logging.info('Client stopped listening')
+            del self.thread
 

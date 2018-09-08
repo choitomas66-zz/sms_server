@@ -1,2 +1,0 @@
-class UserReportableError(Exception):
-    pass
